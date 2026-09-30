@@ -1,0 +1,39 @@
+# ============================
+# Vitis / Build
+# ============================
+
+# Build directories anywhere in the workspace
+**/build/
+**/export/
+
+# Vitis generated/cache directories
+**/.cache/
+**/.compile_commands/
+**/_ide/logs/
+**/_ide/.wsdata/
+
+# Generated files
+*.o
+*.d
+*.log
+*.lock
+*.bin
+*.pdi
+
+# Workspace-specific Vitis file
+.vitisWorkspace.json
+
+# ============================
+# OS / Editor
+# ============================
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+# VS Code
+.vscode/
+
+
+# Vitis local IDE workspace
+_ide/
