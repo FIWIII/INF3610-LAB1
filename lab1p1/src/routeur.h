@@ -6,6 +6,9 @@
 *            		          		       Guy Bois, Loic Nguemegne
 *                                  Polytechnique Montreal, Qc, CANADA
 *                                                  09/2026
+*                                           Lina Silia Hadjal - 2191487
+*                                           Margot-Loane Salmon-Cottreau - 2272048
+*                         Code routeur.c pour la partie 1 du laboratoire 1 de INF3610
 *
 *
 *********************************************************************************************************
