@@ -405,6 +405,10 @@ void TaskStop(void *data) {
         / configTICK_RATE_HZ;
   xil_printf("Temps total d'execution : '%d.%09d' s\r\n",(int)sec, (int)nsec);
 
+// ========================================================================
+// 5.2.4.5 : Calcul du temps total avec le Global Timer
+// ========================================================================
+
   // Nombre d'increments du compteur entre le debut et la fin.
   duree_gt = fin_execution_gt - debut_execution_gt;
 
@@ -631,6 +635,12 @@ void TaskComputing(void *pdata) {
 #endif
 
 #if DELAI_0_1 == 1
+        // ========================================================================
+        // 5.2.4.3 : Attente active (Busy-Wait) avec le Global Timer
+        // À 100 Hz, le tick de l'OS est de 10 ms. FreeRTOS est donc incapable de 
+        // gérer une attente de 0 ou 1 ms. On délègue cette attente au matériel 
+        // pour s'affranchir de la limite de résolution logicielle.
+        // ========================================================================
         // Choisit une attente de 0 ou 1 milliseconde.
         delay_ms = rand() % 2;
 
@@ -1030,6 +1040,13 @@ void err_msg(char *entete, uint8_t err) {
     xil_printf(": Une erreur est retourn�e : code %d \n", err);
   }
 }
+
+// ========================================================================
+// 5.2.4.5 : Démarrage du Global Timer (compteur matériel 64 bits)
+// Permet de mesurer le temps réel (Wall Clock Time) indépendamment 
+// de l'ordonnanceur de FreeRTOS. Cela évite les dérives temporelles 
+// causées par la surcharge de l'OS (overhead) à haute fréquence.
+// ========================================================================
 
 void StartupTask(void *p_arg) {
 
