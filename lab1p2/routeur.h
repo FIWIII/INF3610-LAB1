@@ -249,7 +249,7 @@ int taskCreationErrorCheck(TaskHandle_t handle);
 /* ============================================================
  * Débogage des ISR
  * ============================================================ */
-#define DEBUG_ISR 0
+#define DEBUG_ISR 1
 
 /* ============================================================
  * Sélection dynamique de la section critique et de la minuterie

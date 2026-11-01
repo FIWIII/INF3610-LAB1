@@ -380,9 +380,22 @@ void TaskGenerate(void *data) {
  *********************************************************************************************************
  */
 
-void fit_timer_isr0(void *p_int_arg, uint32_t source_cpu){}
+void fit_timer_isr0(void *p_int_arg, uint32_t source_cpu){
+  //Manip 2 
+  BaseType_t xHigherPriorityTaskWoken = false; 
+  #if DEBUG_ISR == 1
+    xil_printf("---------------- FIT TIMER 0 -------------------- \n");
+  #endif
+
+  if (routerIsOn == 1 && routerIsOnPause == 0){
+    xEventGroupSetBitsFromISR(RouterStatus, TASK_STATS_PRINT, &xHigherPriorityTaskWoken); 
+  }
+
+  portYIELD_FROM_ISR(xHigherPriorityTaskWoken); 
+}
 
 void gpio_isr0(void *p_int_arg, uint32_t source_cpu){
+  //Manip 1 
   BaseType_t xHigherPriorityTaskWoken = false; 
   
   #if DEBUG_ISR == 1 
@@ -408,7 +421,14 @@ void gpio_isr0(void *p_int_arg, uint32_t source_cpu){
 
 void gpio_isr1(void *p_int_arg, uint32_t source_cpu){}
 
-void timer_isr(void *CallbackRef, u8 TmrCtrNumber){}
+void timer_isr(void *CallbackRef, u8 TmrCtrNumber){
+  #if DEBUG_ISR == 1
+    xil_printf("------------------------- timer_isr -----------\n"); 
+  #endif
+
+  // Manip 3
+  timer_irq_count++; 
+}
 
  
 /*
@@ -419,6 +439,7 @@ void timer_isr(void *CallbackRef, u8 TmrCtrNumber){}
  */
 void TaskReset(void *data) {
   while (true) {
+    // Manip 1 
     xEventGroupWaitBits(RouterStatus, TASK_RESET_RDY, pdTRUE, pdTRUE, portMAX_DELAY); 
 
     if (routerIsOn == 0) {
@@ -431,17 +452,12 @@ void TaskReset(void *data) {
     routerIsOnPause = 0; 
     
     xEventGroupSetBits(RouterStatus, TASKS_ROUTER);
-    // xil_printf("--------------------- Task Reset --------------------\n");
-    // EventBits_t flags = xEventGroupGetBits(RouterStatus);
-    // xil_printf("--------------------- Flags: %x "
-    //            "---------------------------------------\n",
-    //            flags);
-    // vTaskSuspend(TaskResetHandler);
   }
 }
 
 void TaskStop(void *data) {
   while (true){
+    // Manip 1
     xEventGroupWaitBits(RouterStatus, TASK_STOP_RDY, pdTRUE, pdTRUE, portMAX_DELAY); 
 
     if (routerIsOn == 1 && routerIsOnPause == 0){
@@ -882,7 +898,8 @@ void TaskStats(void *pdata) {
   uint64_t nsec;
 
   while (1) {
-    xEventGroupWaitBits(RouterStatus, TASK_STATS_RDY, pdFALSE, pdTRUE,
+    // switch a TASK_STATS_PRINT (énoncé) et pdFALSE devient pdTRUE pour clean les bits et attendre la prochaine interruption
+    xEventGroupWaitBits(RouterStatus, TASK_STATS_PRINT, pdTRUE, pdTRUE,
                         portMAX_DELAY);
 
     xSemaphoreTake(mutPrint, portMAX_DELAY);
@@ -1047,13 +1064,14 @@ xil_printf("19- Attente de blocage moyen pour le semaphore : "
         nbPacketMauvaisCRCTotal + nbPacketMauvaiseSourceTotal +
         nbPacketFIFOpleineTotal + nbPacketMauvaisePrioriteTotal;
 
-    // On stoppe tout le programme quand on a atteint la limite de paquets
-    if (nbPacketCrees > limite_de_paquets)
-      xSemaphoreGive(Sem);
+    // Manip 2
+    // // On stoppe tout le programme quand on a atteint la limite de paquets
+    // if (nbPacketCrees > limite_de_paquets)
+    //   xSemaphoreGive(Sem);
 
-    // On imprime ls statistiques � toutes les 10 secondes
-    TickType_t xDelay = pdMS_TO_TICKS(10000);
-    vTaskDelay(xDelay);
+    // // On imprime ls statistiques � toutes les 10 secondes
+    // TickType_t xDelay = pdMS_TO_TICKS(10000);
+    // vTaskDelay(xDelay);
   }
 }
 
@@ -1180,6 +1198,7 @@ if (MaxTaskPrio < TaskStatsPRIO) xil_printf(":Erreur priorité max trop haute\n"
                                       TaskStopPRIO, TaskStopSTK, &TaskStopTCB);
   err |= taskCreationErrorCheck(TaskStopHandler);
 
+  // Manip 1
   xil_printf("Programme initialise - Pret a demarrer - Actionner bouton.\n");
 
   xEventGroupWaitBits(RouterStatus, TASK_SHUTDOWN, pdTRUE, pdTRUE, portMAX_DELAY); 
