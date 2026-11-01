@@ -249,6 +249,7 @@ int taskCreationErrorCheck(TaskHandle_t handle);
 /* ============================================================
  * Débogage des ISR
  * ============================================================ */
+ //Manip 3
 #define DEBUG_ISR 1
 
 /* ============================================================
@@ -301,6 +302,14 @@ volatile int Status_Timer_Pending   = Timer_Sw;
 
 // Nouvelle version inclus aussi cette variable pour simplifier vos tests 
 volatile int nbPacketCreesDepuisGpio_isr1 = 0;
+
+/* ============================================================
+ * Switches (Bitmasks pour gpio_isr1)
+ * ============================================================ */
+#define SWITCH0 0 // 0b00: SW0 down, SW1 down
+#define SWITCH1 1 // 0b01: SW0 up, SW1 down
+#define SWITCH2 2 // 0b10: SW0 down, SW1 up
+#define SWITCH3 3 // 0b11: SW0 up, SW1 up
 
 
 #endif /* AJOUTS_ROUTER_H_POUR_LAB1_2_H_ */

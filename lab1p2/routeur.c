@@ -25,6 +25,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+#include <xil_types.h>
 #include <xparameters.h>
 
 #include <xil_printf.h>
@@ -65,6 +66,11 @@ UBaseType_t TaskQueueingQMax = 0;
 UBaseType_t TaskComputing_HighQMax = 0;
 UBaseType_t TaskComputing_MediumQMax = 0;
 UBaseType_t TaskComputing_LowQMax = 0;
+
+//variables pour TaskResetMeasurements - Manip 4
+static StackType_t TaskResetMeasurementsSTK[TASK_STK_SIZE]; 
+static StackType_t TaskResetMeasurementsTCB; 
+TaskHandle_t TaskResetMeasurementsHandler; 
 
 
 // � utiliser pour suivre le remplissage et le vidage des fifos
@@ -200,17 +206,14 @@ static void GlobalTimer_Start(void)
 }
 
 void Update_TS(Packet *packet) {
+  //Manip 4
 
   uint64_t delay;
-
-  delay = xTaskGetTickCount() -
-          packet->timestamp; // Valeur courante - valeur initiale
-
+  delay = GlobalTimer_Read64() - packet->timestamp; 
+  
   if (delay < 0) {
     xil_printf("Attention overflow\n");
-  }
-
-  else {
+  } else {
 
     switch (packet->type) {
     case PACKET_VIDEO:
@@ -297,10 +300,14 @@ void TaskGenerate(void *data) {
         packet->data[i] = (unsigned int)rand();
 
 #if PERFORMANCE_TRACE == 1
-      packet->timestamp = xTaskGetTickCount();
+      // Manip 4
+      packet->timestamp = GlobalTimer_Read64();
 #endif
 
       packet->data[0] = ++nbPacketCrees;
+
+      // Manip 4 
+      nbPacketCreesDepuisGpio_isr1++; 
 
       // Calcul du CRC avec injection de fautes
       packet->crc = 0;
@@ -396,7 +403,7 @@ void fit_timer_isr0(void *p_int_arg, uint32_t source_cpu){
 
 void gpio_isr0(void *p_int_arg, uint32_t source_cpu){
   //Manip 1 
-  BaseType_t xHigherPriorityTaskWoken = false; 
+  BaseType_t xHigherPriorityTaskWoken = pdFALSE; 
   
   #if DEBUG_ISR == 1 
     xil_printf("--------------------- gpio_isr0 --------------- \n");
@@ -419,9 +426,64 @@ void gpio_isr0(void *p_int_arg, uint32_t source_cpu){
   portYIELD_FROM_ISR(xHigherPriorityTaskWoken); // changer le contexte si une higher priority task est réveillée
 }
 
-void gpio_isr1(void *p_int_arg, uint32_t source_cpu){}
+void gpio_isr1(void *p_int_arg, uint32_t source_cpu){
+  // Manip 4
+  BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+
+  #if DEBUG_ISR == 1
+    xil_printf("------------- GPIO ISR1 ------------------ \n"); 
+  #endif
+  
+  if (routerIsOn == 1 && routerIsOnPause == 0){
+    u32 status = XGpio_InterruptGetStatus(&gpSwitch); 
+    int switch_data = XGpio_DiscreteRead(&gpSwitch, 1);
+    // lire seulement sw1 et sw0
+    switch_data = switch_data & 0x03; 
+
+    switch (switch_data) {
+      case SWITCH0 : 
+        Status_CS_Pending = CS_Mutex; 
+        Status_Timer_Pending = Timer_Sw; 
+        TurnLEDSwitch(COLOR_DOUBLE_PURPLE);
+          #if DEBUG_ISR == 1
+            xil_printf("------------- Mutex & SW Timer ------------------ \n"); 
+          #endif
+        break; 
+      case SWITCH1: 
+        Status_CS_Pending = CS_Semaphore; 
+        Status_Timer_Pending = Timer_Sw; 
+        TurnLEDSwitch(COLOR_DOUBLE_YELLOW);
+          #if DEBUG_ISR == 1
+            xil_printf("------------- Semaphore & SW Timer ------------------ \n"); 
+          #endif
+        break; 
+      case SWITCH2: 
+        Status_CS_Pending = CS_Mutex; 
+        Status_Timer_Pending = Timer_Hw; 
+        TurnLEDSwitch(COLOR_DOUBLE_RED);
+          #if DEBUG_ISR == 1
+            xil_printf("------------- Mutex & HW Timer ------------------ \n"); 
+          #endif
+        break; 
+      case SWITCH3: 
+        Status_CS_Pending = CS_Semaphore; 
+        Status_Timer_Pending = Timer_Hw; 
+        TurnLEDSwitch(COLOR_DOUBLE_BLUE);
+          #if DEBUG_ISR == 1
+            xil_printf("------------- Semaphore & HW Timer ------------------ \n"); 
+          #endif
+        break; 
+    }
+    if ((Status_CS_Pending != Status_CS) || (Status_Timer_Pending != Status_Timer)){
+      xEventGroupSetBitsFromISR(RouterStatus, TASK_RESET_MEASUREMENTS_RDY, &xHigherPriorityTaskWoken); 
+    }
+    XGpio_InterruptClear(&gpSwitch, status); 
+  } 
+  portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+}
 
 void timer_isr(void *CallbackRef, u8 TmrCtrNumber){
+  // Manip 3 
   #if DEBUG_ISR == 1
     xil_printf("------------------------- timer_isr -----------\n"); 
   #endif
@@ -433,10 +495,50 @@ void timer_isr(void *CallbackRef, u8 TmrCtrNumber){
  
 /*
  *********************************************************************************************************
- *											  TaskReset
+ *											  TaskReset et TaskResetMeasurements
  *
  *********************************************************************************************************
  */
+
+void TaskResetMeasurements( void * date){
+  // Manip 4 
+  while(true){
+    xEventGroupWaitBits(RouterStatus, TASK_RESET_MEASUREMENTS_RDY, pdTRUE, pdTRUE, portMAX_DELAY);
+    
+    int cs_changed = (Status_CS_Pending != Status_CS);
+    int timer_changed = (Status_Timer_Pending != Status_Timer);
+    
+    if (cs_changed) {
+      vTaskSuspend(TaskgenerateHandler);
+      vTaskDelay(pdMS_TO_TICKS(delai_pour_vider_les_fifos_msec));
+        
+      TaskQueueingQMax = 0;  
+      TaskComputing_HighQMax = 0;
+      TaskComputing_MediumQMax = 0;
+      TaskComputing_LowQMax = 0;
+    }
+    if (cs_changed || timer_changed) {
+      max_delay_video = 0;
+      max_delay_audio = 0;
+      max_delay_autre = 0;
+        
+      average_blocking_mutex = 0;
+      average_blocking_sem = 0;
+      nbPacketTraites_Video = 0;
+      nb_blocking_measure_rejected = 0;
+      nbPacketCreesDepuisGpio_isr1 = 0;
+        
+      Status_CS = Status_CS_Pending;
+      Status_Timer = Status_Timer_Pending;
+    }
+    
+    if (cs_changed) {
+      vTaskResume(TaskgenerateHandler);
+    }
+    xEventGroupSetBits(RouterStatus, TASK_STATS_PRINT);
+  }
+}
+
 void TaskReset(void *data) {
   while (true) {
     // Manip 1 
@@ -617,12 +719,19 @@ void TaskComputing(void *pdata) {
   Packet *packet = NULL;
   uint64_t actualticks = 0;
   Info_FIFO info = *(Info_FIFO *)pdata;
+
+  // variables manip 4
+  uint64_t t1_Sw, t2_Sw;
+  uint32_t t1_Hw, t2_Hw;
+  uint32_t timer_irq_count_before, timer_irq_count_after;
+  
   int WAITFORTICKS;
   float nombre;
   // Variables pour l'attente active mesuree avec le Global Timer.
   uint32_t delay_ms;
   uint64_t delay_counts;
   uint64_t start_counts;
+
 
   while (true) {
     xEventGroupWaitBits(RouterStatus, TASK_COMPUTING_RDY, pdFALSE, pdTRUE,
@@ -659,19 +768,50 @@ void TaskComputing(void *pdata) {
       switch (packet->type) {
 
       case PACKET_VIDEO:
-#if MUTEX == 1
-        t1 = xTaskGetTickCount();
-        xSemaphoreTake(mutTaskComputing, portMAX_DELAY);
-        t2 = xTaskGetTickCount();
-        average_blocking_mutex = average_blocking_mutex + (t2 - t1);
-        ++nbPacketTraites_Video;
-#elif SEMAPHORE == 1
-        t1 = xTaskGetTickCount();
-        xSemaphoreTake(SemTaskComputing, portMAX_DELAY) ;
-        t2 = xTaskGetTickCount();
-        average_blocking_sem = average_blocking_sem + (t2 - t1);
-        ++nbPacketTraites_Video;
-#endif
+      // Manip 4
+        if (Status_CS == CS_Mutex) {
+          if (Status_Timer == Timer_Sw) {
+            t1_Sw = GlobalTimer_Read64();
+            xSemaphoreTake(mutTaskComputing, portMAX_DELAY);
+            t2_Sw = GlobalTimer_Read64();
+            average_blocking_mutex += (t2_Sw - t1_Sw);
+            ++nbPacketTraites_Video;
+          } else if (Status_Timer == Timer_Hw) {
+            timer_irq_count_before = timer_irq_count;
+            t1_Hw = XTmrCtr_GetValue(&timer_dev, TIMER_NUMBER);
+            xSemaphoreTake(mutTaskComputing, portMAX_DELAY);
+            t2_Hw = XTmrCtr_GetValue(&timer_dev, TIMER_NUMBER);
+            timer_irq_count_after = timer_irq_count;
+                
+            if (timer_irq_count_before == timer_irq_count_after) {
+              average_blocking_mutex += (t1_Hw - t2_Hw); // Timer Hw is countdown
+              ++nbPacketTraites_Video;
+            } else {
+              ++nb_blocking_measure_rejected;
+            }
+          }
+        } else if (Status_CS == CS_Semaphore) {
+          if (Status_Timer == Timer_Sw) {
+            t1_Sw = GlobalTimer_Read64();
+            xSemaphoreTake(SemTaskComputing, portMAX_DELAY);
+            t2_Sw = GlobalTimer_Read64();
+            average_blocking_sem += (t2_Sw - t1_Sw);
+            ++nbPacketTraites_Video;
+          } else if (Status_Timer == Timer_Hw) {
+            timer_irq_count_before = timer_irq_count;
+            t1_Hw = XTmrCtr_GetValue(&timer_dev, TIMER_NUMBER);
+            xSemaphoreTake(SemTaskComputing, portMAX_DELAY);
+            t2_Hw = XTmrCtr_GetValue(&timer_dev, TIMER_NUMBER);
+            timer_irq_count_after = timer_irq_count;
+                
+            if (timer_irq_count_before == timer_irq_count_after) {
+              average_blocking_sem += (t1_Hw - t2_Hw);
+              ++nbPacketTraites_Video;
+            } else {
+              ++nb_blocking_measure_rejected;
+            }
+          }
+        }
 
 #if DELAI_0_1 == 1
         // ========================================================================
@@ -698,17 +838,15 @@ void TaskComputing(void *pdata) {
           WAITFORTICKS = (rand() % 3) * TICK_SCALING;
         } while (WAITFORTICKS == 0);
         actualticks = xTaskGetTickCount();
-        while (WAITFORTICKS + actualticks > xTaskGetTickCount())
-          ;
+        while (WAITFORTICKS + actualticks > xTaskGetTickCount());
 #endif
 
-#if MUTEX == 1
-        xSemaphoreGive(mutTaskComputing);
-#elif SEMAPHORE == 1
-        xSemaphoreGive(SemTaskComputing);
-#endif
+        if (Status_CS == CS_Mutex) {
+          xSemaphoreGive(mutTaskComputing);
+        } else if (Status_CS == CS_Semaphore) {
+          xSemaphoreGive(SemTaskComputing);
+        }
         break;
-
       case PACKET_AUDIO:
 
 #if DELAI_0_1 == 1
@@ -736,11 +874,13 @@ void TaskComputing(void *pdata) {
         break;
 
       case PACKET_AUTRE:
-#if MUTEX == 1
+      // Manip 4
+      if (Status_CS == CS_Mutex) {
         xSemaphoreTake(mutTaskComputing, portMAX_DELAY);
-#elif SEMAPHORE == 1
+      } else if (Status_CS == CS_Semaphore) {
         xSemaphoreTake(SemTaskComputing, portMAX_DELAY);
-#endif
+      }
+
 
 #if DELAI_0_1 == 1
          // Choisit une attente de 0 ou 1 milliseconde.
@@ -765,11 +905,11 @@ void TaskComputing(void *pdata) {
           ;
 #endif
 
-#if MUTEX == 1
-        xSemaphoreGive(mutTaskComputing);
-#elif SEMAPHORE == 1
-        xSemaphoreGive(SemTaskComputing);
-#endif
+        if (Status_CS == CS_Mutex) {
+          xSemaphoreGive(mutTaskComputing);
+        } else if (Status_CS == CS_Semaphore) {
+          xSemaphoreGive(SemTaskComputing);
+        }
         break;
 
       default:
@@ -910,13 +1050,16 @@ void TaskStats(void *pdata) {
                delai_pour_vider_les_fifos_msec);
     xil_printf("Frequence du systeme: %d\n", configTICK_RATE_HZ);
 
-#if MUTEX == 1
-    xil_printf("Mode mutex ");
-#elif SEMAPHORE == 1
-    xil_printf("Mode semaphore ");
-#else
-    xil_printf("Pas de section critique ");
-#endif
+    if (Status_CS == CS_Mutex) {
+      xil_printf("Mode dynamique: Mutex ");
+    } else if (Status_CS == CS_Semaphore) {
+      xil_printf("Mode dynamique: Semaphore ");
+    }
+    if (Status_Timer == Timer_Sw) {
+      xil_printf("| Timer: SW\r\n");
+    } else {
+      xil_printf("| Timer: HW\r\n");
+    }
 
     xil_printf("\r\n");
 
@@ -965,6 +1108,8 @@ void TaskStats(void *pdata) {
 
     xSemaphoreGive(mutPrint);
 #if PERFORMANCE_TRACE == 1
+//Manip 4 
+uint64_t current_freq_hz = GLOBAL_TIMER_FREQ_HZ; 
 
 sec  = max_delay_video / configTICK_RATE_HZ;
 nsec = ((max_delay_video % configTICK_RATE_HZ) * 1000000000ULL) / configTICK_RATE_HZ;
@@ -984,40 +1129,36 @@ nsec = ((max_delay_autre % configTICK_RATE_HZ) * 1000000000ULL) / configTICK_RAT
 xil_printf("18- Pire temps autre '%d.%09d' s\r\n",
            (int)sec, (int)nsec);
 
-#if MUTEX == 1
+           
+    // Manip 4 - ajustement
+    if (Status_Timer == Timer_Sw) {
+      current_freq_hz = GLOBAL_TIMER_FREQ_HZ; 
+    } else {
+      current_freq_hz = 100000000; // 100 MHz for AXI timer
+    }
 
-total_freq = (uint64_t)nbPacketTraites_Video * configTICK_RATE_HZ;
+    if (Status_CS == CS_Mutex) {
+      total_freq = (uint64_t)nbPacketTraites_Video * current_freq_hz;
+      if (total_freq != 0) {
+        sec = average_blocking_mutex / total_freq;
+        nsec = ((average_blocking_mutex % total_freq) * 1000000000ULL) / total_freq;
+      } else {
+        sec = 0; nsec = 0;
+      }
+        xil_printf("19- Attente de blocage moyen pour le MUTEX : '%d.%09d' s pour %d packets videos traites\r\n",
+                   (int)sec, (int)nsec, nbPacketTraites_Video);
+    } else if (Status_CS == CS_Semaphore) {
+      total_freq = (uint64_t)nbPacketTraites_Video * current_freq_hz;
+      if (total_freq != 0) {
+        sec  = average_blocking_sem / total_freq;
+        nsec = ((average_blocking_sem % total_freq) * 1000000000ULL) / total_freq;
+      } else {
+        sec = 0; nsec = 0;
+      }
+        xil_printf("19- Attente de blocage moyen pour le SEMAPHORE : '%d.%09d' s pour %d packets videos traites\r\n",
+                   (int)sec, (int)nsec, nbPacketTraites_Video);
+    }
 
-// Au premier affichage, aucun paquet video n'a encore ete traite.
-// On evite donc une division par zero.
-if (total_freq != 0) {
-    sec = average_blocking_mutex / total_freq;
-    nsec = ((average_blocking_mutex % total_freq) * 1000000000ULL)
-           / total_freq;
-} else {
-    sec = 0;
-    nsec = 0;
-}
-
-xil_printf("19- Attente de blocage moyen pour le mutex : "
-           "'%d.%09d' s pour %d packets videos traites\r\n",
-           (int)sec, (int)nsec,
-           nbPacketTraites_Video);
-
-#elif SEMAPHORE == 1
-
-total_freq = (uint64_t)nbPacketTraites_Video * configTICK_RATE_HZ;
-
-sec  = average_blocking_mutex / total_freq;
-nsec = ((average_blocking_mutex % total_freq) * 1000000000ULL)
-       / total_freq;
-
-xil_printf("19- Attente de blocage moyen pour le semaphore : "
-           "'%d.%09d' s pour %d packets videos traites\r\n",
-           (int)sec, (int)nsec,
-           nbPacketTraites_Video);
-
-#endif
 
 #endif
     // On vide la fifo des paquets rejet�s et on imprime si l option est
@@ -1197,6 +1338,8 @@ if (MaxTaskPrio < TaskStatsPRIO) xil_printf(":Erreur priorité max trop haute\n"
   TaskStopHandler = xTaskCreateStatic(TaskStop, "TaskStop", TASK_STK_SIZE, NULL,
                                       TaskStopPRIO, TaskStopSTK, &TaskStopTCB);
   err |= taskCreationErrorCheck(TaskStopHandler);
+
+  TaskResetMeasurementsHandler = xTaskCreateStatic(TaskResetMeasurements, "TaskResetMeasurements", TASK_STK_SIZE, NULL, MaxTaskPrio - 1, TaskResetMeasurementsSTK, &TaskResetMeasurementsTCB);
 
   // Manip 1
   xil_printf("Programme initialise - Pret a demarrer - Actionner bouton.\n");
