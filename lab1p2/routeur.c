@@ -69,7 +69,7 @@ UBaseType_t TaskComputing_LowQMax = 0;
 
 //variables pour TaskResetMeasurements - Manip 4
 static StackType_t TaskResetMeasurementsSTK[TASK_STK_SIZE]; 
-static StackType_t TaskResetMeasurementsTCB; 
+static StaticTask_t TaskResetMeasurementsTCB;
 TaskHandle_t TaskResetMeasurementsHandler; 
 
 
@@ -433,9 +433,11 @@ void gpio_isr1(void *p_int_arg, uint32_t source_cpu){
   #if DEBUG_ISR == 1
     xil_printf("------------- GPIO ISR1 ------------------ \n"); 
   #endif
+   // Lire le statut de l'interruption
+  u32 status = XGpio_InterruptGetStatus(&gpSwitch);
   
   if (routerIsOn == 1 && routerIsOnPause == 0){
-    u32 status = XGpio_InterruptGetStatus(&gpSwitch); 
+    
     int switch_data = XGpio_DiscreteRead(&gpSwitch, 1);
     // lire seulement sw1 et sw0
     switch_data = switch_data & 0x03; 
@@ -476,9 +478,10 @@ void gpio_isr1(void *p_int_arg, uint32_t source_cpu){
     }
     if ((Status_CS_Pending != Status_CS) || (Status_Timer_Pending != Status_Timer)){
       xEventGroupSetBitsFromISR(RouterStatus, TASK_RESET_MEASUREMENTS_RDY, &xHigherPriorityTaskWoken); 
-    }
-    XGpio_InterruptClear(&gpSwitch, status); 
-  } 
+    } 
+  }
+  // Acquitter même lorsque le routeur est suspendu
+  XGpio_InterruptClear(&gpSwitch, status);
   portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
 }
 
@@ -1108,23 +1111,23 @@ void TaskStats(void *pdata) {
 
     xSemaphoreGive(mutPrint);
 #if PERFORMANCE_TRACE == 1
-//Manip 4 
+// Manip 4 : délais de traversée avec le Global Timer
 uint64_t current_freq_hz = GLOBAL_TIMER_FREQ_HZ; 
 
-sec  = max_delay_video / configTICK_RATE_HZ;
-nsec = ((max_delay_video % configTICK_RATE_HZ) * 1000000000ULL) / configTICK_RATE_HZ;
+sec  = max_delay_video / GLOBAL_TIMER_FREQ_HZ;
+nsec = ((max_delay_video % GLOBAL_TIMER_FREQ_HZ) * 1000000000ULL) / GLOBAL_TIMER_FREQ_HZ;
 
 xil_printf("16- Pire temps video '%d.%09d' s\r\n",
            (int)sec, (int)nsec);
 
-sec  = max_delay_audio / configTICK_RATE_HZ;
-nsec = ((max_delay_audio % configTICK_RATE_HZ) * 1000000000ULL) / configTICK_RATE_HZ;
+sec  = max_delay_audio / GLOBAL_TIMER_FREQ_HZ;
+nsec = ((max_delay_audio % GLOBAL_TIMER_FREQ_HZ) * 1000000000ULL) / GLOBAL_TIMER_FREQ_HZ;
 
 xil_printf("17- Pire temps audio '%d.%09d' s\r\n",
            (int)sec, (int)nsec);
            
-sec  = max_delay_autre / configTICK_RATE_HZ;
-nsec = ((max_delay_autre % configTICK_RATE_HZ) * 1000000000ULL) / configTICK_RATE_HZ;
+sec  = max_delay_autre / GLOBAL_TIMER_FREQ_HZ;
+nsec = ((max_delay_autre % GLOBAL_TIMER_FREQ_HZ) * 1000000000ULL) / GLOBAL_TIMER_FREQ_HZ;
 
 xil_printf("18- Pire temps autre '%d.%09d' s\r\n",
            (int)sec, (int)nsec);

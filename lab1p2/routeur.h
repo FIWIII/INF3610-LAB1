@@ -250,7 +250,7 @@ int taskCreationErrorCheck(TaskHandle_t handle);
  * Débogage des ISR
  * ============================================================ */
  //Manip 3
-#define DEBUG_ISR 1
+#define DEBUG_ISR 0
 
 /* ============================================================
  * Sélection dynamique de la section critique et de la minuterie
