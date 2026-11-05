@@ -69,7 +69,7 @@ UBaseType_t TaskComputing_LowQMax = 0;
 
 //variables pour TaskResetMeasurements - Manip 4
 static StackType_t TaskResetMeasurementsSTK[TASK_STK_SIZE]; 
-static StackType_t TaskResetMeasurementsTCB; 
+static StaticTask_t TaskResetMeasurementsTCB;
 TaskHandle_t TaskResetMeasurementsHandler; 
 
 
@@ -409,10 +409,11 @@ void gpio_isr0(void *p_int_arg, uint32_t source_cpu){
     xil_printf("--------------------- gpio_isr0 --------------- \n");
   #endif
 
-  int button_data = 0; 
-  u32 status = XGpio_InterruptGetStatus(&gpButton); // obtenir le status du bouton
-  button_data = XGpio_DiscreteRead(&gpButton, GPIO_BUTTONS_CHANNEL); // obtenir la valeur de data button
-  TurnLEDButton(button_data); 
+  int button_data = 0; // Déclaration et initialisation de la variable qui stockera l'état du bouton
+  u32 status = XGpio_InterruptGetStatus(&gpButton); // Récupère le statut de l'interruption pour pouvoir l'acquitter (clear) à la fin de l'ISR
+  button_data = XGpio_DiscreteRead(&gpButton, GPIO_BUTTONS_CHANNEL); // Lit l'état des boutons sur le canal 1 du GPIO, tel qu'expliqué à la section 3
+  TurnLEDButton(button_data); // Allume la LED correspondante au bouton appuyé en écrivant sur le canal 2 du GPIO 
+                              // (la macro TurnLEDButton utilise XGpio_DiscreteWrite en arrière-plan)
 
   if (button_data == BP0) {
     xEventGroupSetBitsFromISR(RouterStatus, TASK_RESET_RDY, &xHigherPriorityTaskWoken);
@@ -433,9 +434,11 @@ void gpio_isr1(void *p_int_arg, uint32_t source_cpu){
   #if DEBUG_ISR == 1
     xil_printf("------------- GPIO ISR1 ------------------ \n"); 
   #endif
+   // Lire le statut de l'interruption
+  u32 status = XGpio_InterruptGetStatus(&gpSwitch);
   
   if (routerIsOn == 1 && routerIsOnPause == 0){
-    u32 status = XGpio_InterruptGetStatus(&gpSwitch); 
+    
     int switch_data = XGpio_DiscreteRead(&gpSwitch, 1);
     // lire seulement sw1 et sw0
     switch_data = switch_data & 0x03; 
@@ -476,9 +479,10 @@ void gpio_isr1(void *p_int_arg, uint32_t source_cpu){
     }
     if ((Status_CS_Pending != Status_CS) || (Status_Timer_Pending != Status_Timer)){
       xEventGroupSetBitsFromISR(RouterStatus, TASK_RESET_MEASUREMENTS_RDY, &xHigherPriorityTaskWoken); 
-    }
-    XGpio_InterruptClear(&gpSwitch, status); 
-  } 
+    } 
+  }
+  // Acquitter même lorsque le routeur est suspendu
+  XGpio_InterruptClear(&gpSwitch, status);
   portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
 }
 
@@ -1050,16 +1054,18 @@ void TaskStats(void *pdata) {
                delai_pour_vider_les_fifos_msec);
     xil_printf("Frequence du systeme: %d\n", configTICK_RATE_HZ);
 
-    if (Status_CS == CS_Mutex) {
-      xil_printf("Mode dynamique: Mutex ");
-    } else if (Status_CS == CS_Semaphore) {
-      xil_printf("Mode dynamique: Semaphore ");
-    }
-    if (Status_Timer == Timer_Sw) {
-      xil_printf("| Timer: SW\r\n");
-    } else {
-      xil_printf("| Timer: HW\r\n");
-    }
+    // Ajout lab1p2 .zip folder
+    if (Status_CS == CS_Mutex)
+      xil_printf("Mode Mutex");
+    else if (Status_CS == CS_Semaphore)
+      xil_printf("Mode Semaphore");
+
+    xil_printf("\r\n");
+
+    if (Status_Timer == Timer_Sw)
+      xil_printf("Timer Sw pour calcul du blocage");
+    else if (Status_Timer == Timer_Hw)
+      xil_printf("Timer Hw pour calcul du blocage");
 
     xil_printf("\r\n");
 
@@ -1108,57 +1114,68 @@ void TaskStats(void *pdata) {
 
     xSemaphoreGive(mutPrint);
 #if PERFORMANCE_TRACE == 1
-//Manip 4 
+// Manip 4 : délais de traversée avec le Global Timer
 uint64_t current_freq_hz = GLOBAL_TIMER_FREQ_HZ; 
 
-sec  = max_delay_video / configTICK_RATE_HZ;
-nsec = ((max_delay_video % configTICK_RATE_HZ) * 1000000000ULL) / configTICK_RATE_HZ;
+// Ajout lab1p2
 
-xil_printf("16- Pire temps video '%d.%09d' s\r\n",
-           (int)sec, (int)nsec);
+    sec = max_delay_video / GLOBAL_TIMER_FREQ_HZ;
 
-sec  = max_delay_audio / configTICK_RATE_HZ;
-nsec = ((max_delay_audio % configTICK_RATE_HZ) * 1000000000ULL) / configTICK_RATE_HZ;
+    nsec = ((max_delay_video % GLOBAL_TIMER_FREQ_HZ) * 1000000000ULL) /
+           GLOBAL_TIMER_FREQ_HZ;
 
-xil_printf("17- Pire temps audio '%d.%09d' s\r\n",
-           (int)sec, (int)nsec);
-           
-sec  = max_delay_autre / configTICK_RATE_HZ;
-nsec = ((max_delay_autre % configTICK_RATE_HZ) * 1000000000ULL) / configTICK_RATE_HZ;
+    xil_printf("16- Pire temps video '%d.%09d' s\r\n", (int)sec, (int)nsec);
 
-xil_printf("18- Pire temps autre '%d.%09d' s\r\n",
-           (int)sec, (int)nsec);
+    sec = max_delay_audio / GLOBAL_TIMER_FREQ_HZ;
 
-           
-    // Manip 4 - ajustement
+    nsec = ((max_delay_audio % GLOBAL_TIMER_FREQ_HZ) * 1000000000ULL) /
+           GLOBAL_TIMER_FREQ_HZ;
+
+    xil_printf("17- Pire temps audio '%d.%09d' s\r\n", (int)sec, (int)nsec);
+
+    sec = max_delay_autre / GLOBAL_TIMER_FREQ_HZ;
+
+    nsec = ((max_delay_autre % GLOBAL_TIMER_FREQ_HZ) * 1000000000ULL) /
+           GLOBAL_TIMER_FREQ_HZ;
+
+    xil_printf("18- Pire temps autre '%d.%09d' s\r\n", (int)sec, (int)nsec);
+
     if (Status_Timer == Timer_Sw) {
-      current_freq_hz = GLOBAL_TIMER_FREQ_HZ; 
-    } else {
-      current_freq_hz = 100000000; // 100 MHz for AXI timer
+      current_freq_hz = GLOBAL_TIMER_FREQ_HZ;
+    } else if (Status_Timer == Timer_Hw) {
+      current_freq_hz = XPAR_AXI_TIMER_0_CLOCK_FREQUENCY;
     }
 
     if (Status_CS == CS_Mutex) {
+
       total_freq = (uint64_t)nbPacketTraites_Video * current_freq_hz;
-      if (total_freq != 0) {
-        sec = average_blocking_mutex / total_freq;
-        nsec = ((average_blocking_mutex % total_freq) * 1000000000ULL) / total_freq;
-      } else {
-        sec = 0; nsec = 0;
-      }
-        xil_printf("19- Attente de blocage moyen pour le MUTEX : '%d.%09d' s pour %d packets videos traites\r\n",
-                   (int)sec, (int)nsec, nbPacketTraites_Video);
+
+      sec = average_blocking_mutex / total_freq;
+      nsec =
+          ((average_blocking_mutex % total_freq) * 1000000000ULL) / total_freq;
+
+      xil_printf("19- Attente de blocage moyen pour le mutex : "
+                 "'%d.%09d' s pour %d packets videos traites\r\n",
+                 (int)sec, (int)nsec, nbPacketTraites_Video);
     } else if (Status_CS == CS_Semaphore) {
+
       total_freq = (uint64_t)nbPacketTraites_Video * current_freq_hz;
-      if (total_freq != 0) {
-        sec  = average_blocking_sem / total_freq;
-        nsec = ((average_blocking_sem % total_freq) * 1000000000ULL) / total_freq;
-      } else {
-        sec = 0; nsec = 0;
-      }
-        xil_printf("19- Attente de blocage moyen pour le SEMAPHORE : '%d.%09d' s pour %d packets videos traites\r\n",
-                   (int)sec, (int)nsec, nbPacketTraites_Video);
+
+      sec = average_blocking_sem / total_freq;
+      nsec = ((average_blocking_sem % total_freq) * 1000000000ULL) / total_freq;
+
+      xil_printf("19- Attente de blocage moyen pour le semaphore : "
+                 "'%d.%09d' s pour %d packets videos traites\r\n",
+                 (int)sec, (int)nsec, nbPacketTraites_Video);
     }
 
+    xil_printf("20 - Nb de packets total crees depuis dernier changement sur la switch : %d\n", nbPacketCreesDepuisGpio_isr1);
+
+    if (Status_Timer == Timer_Hw) {
+      xil_printf("21- Nb de mesures de blocage rejetees "
+                 "(AXI Timer recharge pendant la mesure) : %d\r\n",
+                 nb_blocking_measure_rejected);
+    }
 
 #endif
     // On vide la fifo des paquets rejet�s et on imprime si l option est
@@ -1213,6 +1230,9 @@ xil_printf("18- Pire temps autre '%d.%09d' s\r\n",
     // // On imprime ls statistiques � toutes les 10 secondes
     // TickType_t xDelay = pdMS_TO_TICKS(10000);
     // vTaskDelay(xDelay);
+
+    xil_printf("\n------------------ Fin de l'affichage des statistiques "
+               "------------------\n\n");
   }
 }
 
